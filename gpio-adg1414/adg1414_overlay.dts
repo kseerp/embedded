@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Overlay for ADG1414
+ *
+ * Copyright 2023 Analog Devices Inc.
+ */
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2835", "brcm,bcm2708", "brcm,bcm2709", "brcm,bcm2711";
+};
+
+&spidev0 {
+	status = "disabled";
+};
+
+&spi0 {
+        #address-cells = <1>;
+        #size-cells = <0>;
+        status = "okay";
+
+	gpio@0 {
+                compatible = "adi,adg1414";
+                reg = <0>; 
+                spi-max-frequency = <1000000>;
+                // spi-cpha;
+
+                reset-gpios = <&gpio 17 1>;
+                #daisy-chained-devices = <3>;
+        };
+};

@@ -1,0 +1,25 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_OUTPUT_FILESEP	slash	/slash or backslash/
+!_TAG_OUTPUT_MODE	u-ctags	/u-ctags or e-ctags/
+!_TAG_PATTERN_LENGTH_LIMIT	96	/0 for no limit/
+!_TAG_PROGRAM_AUTHOR	Universal Ctags Team	//
+!_TAG_PROGRAM_NAME	Universal Ctags	/Derived from Exuberant Ctags/
+!_TAG_PROGRAM_URL	https://ctags.io/	/official site/
+!_TAG_PROGRAM_VERSION	0.0.0	//
+ADG1414_MAX_DEVICES	adg1414.c	/^#define ADG1414_MAX_DEVICES	/;"	d	file:
+adg1414_driver	adg1414.c	/^static struct spi_driver adg1414_driver = {$/;"	v	typeref:struct:spi_driver	file:
+adg1414_get	adg1414.c	/^static int adg1414_get(struct gpio_chip *chip,$/;"	f	typeref:typename:int	file:
+adg1414_get_direction	adg1414.c	/^static int adg1414_get_direction(struct gpio_chip *chip,$/;"	f	typeref:typename:int	file:
+adg1414_of_match	adg1414.c	/^static const struct of_device_id adg1414_of_match[] = {$/;"	v	typeref:typename:const struct of_device_id[]	file:
+adg1414_probe	adg1414.c	/^static int adg1414_probe(struct spi_device *spi)$/;"	f	typeref:typename:int	file:
+adg1414_set	adg1414.c	/^static void adg1414_set(struct gpio_chip *chip,$/;"	f	typeref:typename:void	file:
+adg1414_state	adg1414.c	/^struct adg1414_state {$/;"	s	file:
+all	Makefile	/^all: module dt$/;"	t
+buffer	adg1414.c	/^	u8				buffer[32];$/;"	m	struct:adg1414_state	typeref:typename:u8[32]	file:
+chip	adg1414.c	/^	struct gpio_chip		chip;$/;"	m	struct:adg1414_state	typeref:struct:gpio_chip	file:
+clean	Makefile	/^clean:$/;"	t
+dt	Makefile	/^dt: adg1414_overlay.dts$/;"	t
+lock	adg1414.c	/^	struct mutex			lock; \/* protect sensor state *\/$/;"	m	struct:adg1414_state	typeref:struct:mutex	file:
+module	Makefile	/^module:$/;"	t
+spi	adg1414.c	/^	struct spi_device		*spi;$/;"	m	struct:adg1414_state	typeref:struct:spi_device *	file:
