@@ -181,23 +181,19 @@ static ssize_t ltc2672_dac_input_write(struct iio_dev *indio_dev,
 	if (val > LTC2672_16BIT_FULL_SCALE)
 		return -EINVAL;
 
-	mutex_lock(&st->lock);
 	ret = regmap_write(st->regmap, span, st->span_code[chan->channel]);
 	if (ret)
-		goto out_unlock;
+		return ret;
 
 	ret = regmap_write(st->regmap, toggle, st->toggle_chan[chan->channel]);
 	if (ret)
-		goto out_unlock;
+		return ret;
 
 	ret = regmap_write(st->regmap, code, val);
 	if (ret)
-		goto out_unlock;
+		return ret;
 
-out_unlock:
-	mutex_unlock(&st->lock);
-
-	return len;
+	return ret ?: len;
 }
 
 static ssize_t ltc2672_powerdown_set(struct iio_dev *indio_dev,
@@ -407,9 +403,10 @@ static void ltc2672_regulator_disable(void *data)
 
 static int ltc2672_probe(struct spi_device *spi)
 {
+	struct device *dev = &spi->dev;
 	struct iio_dev *indio_dev;
 	struct ltc2672_state *st;
-	struct device *dev = &spi->dev;
+	struct gpio_desc *reset;
 	struct regulator *vref;
 	int ret;
 
@@ -464,6 +461,15 @@ static int ltc2672_probe(struct spi_device *spi)
 	}
 
 	mutex_init(&st->lock);
+
+	reset = devm_gpiod_get_optional(dev, "adi,reset", GPIOD_OUT_LOW);
+	if (IS_ERR(reset))
+		return dev_err_probe(dev, PTR_ERR(reset),
+				     "Failed to get reset gpio\n");
+	if (reset) {
+		msleep(100);
+		gpiod_set_value_cansleep(reset, 1);
+	}
 
 	ret = ltc2672_chan_config(st);
 	if (ret)
