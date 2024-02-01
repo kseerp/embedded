@@ -24,9 +24,12 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
+		adi,reset-gpios = <&gpio 17 0>;
+
                 channel@0 {
                         reg = <0>;
                         adi,current-span-code = <1>;
+                        adi,toggle-mode;
                 };
 
                 channel@1 {
