@@ -23,7 +23,7 @@
 #include <linux/regulator/consumer.h>
 #include <linux/spi/spi.h>
 
-#define LTC2664_DAC_CHANNELS		4
+#define LTC2664_MAX_CHANNEL		5
 
 #define LTC2664_CMD_WRITE_N(n)		(0x00 + (n))  /* Write to input register n */
 #define LTC2664_CMD_UPDATE_N(n)		(0x10 + (n))  /* Update (power up) DAC register n */
@@ -42,8 +42,8 @@
 #define  LTC2664_REF_DISABLE		0x0001  /* Disable internal reference to save power when using an ext. ref. */
 
 enum ltc2664_ids {
-	ID_LTC2664,
-	ID_LTC2672,
+	LTC2664,
+	LTC2672,
 };
 
 enum {
@@ -75,27 +75,26 @@ static const u16 ltc2664_mspan_lut[8][2] = {
 	{LTC2664_SPAN_RANGE_0V_5V, 0} /* MPS2=1, MPS1=1, MSP0=1 (7)*/
 };
 
-struct ltc2664_chan {
-	bool toggle_chan;
-	bool powerdown;
-	u8 span;
-	u16 raw[2]; /* A/B*/
-};
-
 struct ltc2664_chip_info {
 	char *name;
 	unsigned int num_channels;
 	struct iio_chan_spec *iio_chan;
 };
 
+struct ltc2664_chan {
+	bool toggle_chan;
+	bool powerdown;
+	u8 span;
+	u16 raw[2]; /* A/B */
+};
+
 struct ltc2664_state {
 	struct spi_device *spi;
 	struct regmap *regmap;
 	struct regulator_bulk_data regulators[2];
-	struct ltc2664_chan channels[LTC2664_DAC_CHANNELS];
+	struct ltc2664_chan channels[LTC2664_MAX_CHANNEL];
 	/* lock to protect against multiple access to the device and shared data */
 	struct mutex lock;
-	// struct iio_chan_spec *iio_chan;
 	struct ltc2664_chip_info *chip_info;
 	int vref;
 	u32 toggle_sel;
@@ -442,11 +441,24 @@ static struct iio_chan_spec ltc2664_channels[] = {
 	LTC2664_CHANNEL(3),
 };
 
-static const struct ltc2664_chip_info ltc2664_chip_info_tbl[] = {
-	[ID_LTC2664] = {
+static struct iio_chan_spec ltc2672_channels[] = {
+	LTC2664_CHANNEL(0),
+	LTC2664_CHANNEL(1),
+	LTC2664_CHANNEL(2),
+	LTC2664_CHANNEL(3),
+	LTC2664_CHANNEL(4),
+};
+
+static struct ltc2664_chip_info ltc2664_chip_info_tbl[] = {
+	[LTC2664] = {
 		.name = "ltc2664",
-		.num_channels = LTC2664_DAC_CHANNELS,
+		.num_channels = 4,
 		.iio_chan = ltc2664_channels,
+	},
+	[LTC2672] = {
+		.name = "ltc2672",
+		.num_channels = 5,
+		.iio_chan = ltc2672_channels,
 	},
 };
 
@@ -465,6 +477,7 @@ static int ltc2664_span_lookup(const struct ltc2664_state *st, int min, int max)
 
 static int ltc2664_channel_config(struct ltc2664_state *st)
 {
+	struct ltc2664_chip_info *chip_info = st->chip_info;
 	struct device *dev = &st->spi->dev;
 	struct fwnode_handle *child;
 	u32 reg, tmp[2], mspan;
@@ -490,11 +503,11 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 					     "Failed to get reg property\n");
 		}
 
-		if (reg >= LTC2664_DAC_CHANNELS) {
+		if (reg >= chip_info->num_channels) {
 			fwnode_handle_put(child);
 			return dev_err_probe(dev, -EINVAL,
 					     "reg bigger than: %d\n",
-					     LTC2664_DAC_CHANNELS);
+					     chip_info->num_channels);
 		}
 
 		chan = &st->channels[reg];
@@ -502,20 +515,17 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 		chan->raw[0] = ltc2664_mspan_lut[mspan][1];
 		chan->raw[1] = ltc2664_mspan_lut[mspan][1];
 
-		// if (fwnode_property_read_bool(child, "adi,toggle-mode")) {
-		// 	chan->toggle_chan = true;
-		// 	/* assume sw toggle ABI */
-		// 	// st->iio_chan[reg].ext_info = ltc2664_toggle_sym_ext_info;
-		// 	st->chip_info->iio_chan[reg].ext_info = ltc2664_toggle_sym_ext_info;
-		// 	/*
-		// 	 * Clear IIO_CHAN_INFO_RAW bit as toggle channels expose
-		// 	 * out_voltage_raw{0|1} files.
-		// 	 */
-		// 	// __clear_bit(IIO_CHAN_INFO_RAW,
-		// 	// 	    &st->iio_chan[reg].info_mask_separate);
-		// 	__clear_bit(IIO_CHAN_INFO_RAW,
-		// 		    &st->chip_info->iio_chan[reg].info_mask_separate);
-		// }
+		if (fwnode_property_read_bool(child, "adi,toggle-mode")) {
+			chan->toggle_chan = true;
+			/* assume sw toggle ABI */
+			chip_info->iio_chan[reg].ext_info = ltc2664_toggle_sym_ext_info;
+			/*
+			 * Clear IIO_CHAN_INFO_RAW bit as toggle channels expose
+			 * out_voltage_raw{0|1} files.
+			 */
+			__clear_bit(IIO_CHAN_INFO_RAW,
+				    &chip_info->iio_chan[reg].info_mask_separate);
+		}
 
 		ret = fwnode_property_read_u32_array(child, "adi,output-range-microvolt",
 						     tmp, ARRAY_SIZE(tmp));
@@ -548,7 +558,7 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 static int ltc2664_setup(struct ltc2664_state *st, struct regulator *vref)
 {
 	struct gpio_desc *gpio;
-	// const struct ltc2664_chip_info *chip_info;
+	struct ltc2664_chip_info *chip_info = st->chip_info;
 	int ret;
 
 	/*
@@ -564,27 +574,18 @@ static int ltc2664_setup(struct ltc2664_state *st, struct regulator *vref)
 		gpiod_set_value_cansleep(gpio, 0);
 	}
 
-	// /* print num_channels */
-	// dev_info(&st->spi->dev, "num_channels: %d\n", chip_info->num_channels);
 	/*
 	 * Duplicate the default channel configuration as it can change during
 	 * @ltc2664_channel_config()
 	 */
-	// st->iio_chan = devm_kmemdup(&st->spi->dev, ltc2664_channels,
-	// 				  sizeof(ltc2664_channels), GFP_KERNEL);
-	// if (!st->iio_chan)
-	// 	return -ENOMEM;
-	// chip_info->iio_chan = devm_kmemdup(&st->spi->dev, ltc2664_channels,
-	// 				   sizeof(ltc2664_channels), GFP_KERNEL);
-	// if (!chip_info->iio_chan)
-	// 	return -ENOMEM;
+	chip_info->iio_chan = devm_kmemdup(&st->spi->dev, ltc2664_channels,
+					   sizeof(ltc2664_channels), GFP_KERNEL);
+	if (!chip_info->iio_chan)
+		return -ENOMEM;
 
 	ret = ltc2664_channel_config(st);
 	if (ret)
 		return ret;
-
-	/* print num_channels */
-	// dev_info(&st->spi->dev, "num_channels: %d\n", st->chip_info->num_channels);
 
 	if (!vref)
 		return 0;
@@ -623,7 +624,7 @@ static int ltc2664_probe(struct spi_device *spi)
 	struct iio_dev *indio_dev;
 	struct regulator *vref_reg;
 	struct device *dev = &spi->dev;
-	const struct ltc2664_chip_info *chip_info;
+	struct ltc2664_chip_info *chip_info;
 	int ret;
 
 	indio_dev = devm_iio_device_alloc(dev, sizeof(*st));
@@ -633,9 +634,9 @@ static int ltc2664_probe(struct spi_device *spi)
 	st = iio_priv(indio_dev);
 	st->spi = spi;
 
-	chip_info = &ltc2664_chip_info_tbl[ID_LTC2664];
+	chip_info = &ltc2664_chip_info_tbl[spi_get_device_id(spi)->driver_data];
 
-	// st->chip_info = chip_info;
+	st->chip_info = chip_info;
 
 	mutex_init(&st->lock);
 
@@ -685,16 +686,9 @@ static int ltc2664_probe(struct spi_device *spi)
 		st->vref = ret / 1000;
 	}
 
-
-
 	ret = ltc2664_setup(st, vref_reg);
 	if (ret)
 		return ret;
-
-	// chip_info->iio_chan = devm_kmemdup(dev, ltc2664_channels,
-	// 				   sizeof(ltc2664_channels), GFP_KERNEL);
-	// if (!chip_info->iio_chan)
-	// 	return -ENOMEM;
 
 	indio_dev->name = chip_info->name;
 	indio_dev->info = &ltc2664_info;
@@ -706,8 +700,8 @@ static int ltc2664_probe(struct spi_device *spi)
 }
 
 static const struct spi_device_id ltc2664_id[] = {
-	{ "ltc2664", ID_LTC2664 },
-	{ "ltc2672", ID_LTC2672 },
+	{ "ltc2664", LTC2664 },
+	{ "ltc2672", LTC2672 },
 	{ },
 };
 MODULE_DEVICE_TABLE(spi, ltc2664_id);
@@ -729,6 +723,6 @@ static struct spi_driver ltc2664_driver = {
 };
 module_spi_driver(ltc2664_driver);
 
-MODULE_AUTHOR("Michael Hennerich <michael.hennerich@analog.com>");
+MODULE_AUTHOR("Kim Seer Paller <kimseer.paller@analog.com>");
 MODULE_DESCRIPTION("Analog Devices LTC2664 DAC");
 MODULE_LICENSE("GPL");

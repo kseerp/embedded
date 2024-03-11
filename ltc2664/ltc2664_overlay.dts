@@ -41,13 +41,13 @@
                 };
 
                 channel@3 {
-                        reg = <0>;
+                        reg = <3>;
                         adi,toggle-mode;
                         adi,output-range-microvolt = <0 10000000>;
                 };
 
                 // channel@4 {
-                //         reg = <0>;
+                //         reg = <4>;
                 //         // adi,toggle-mode;
                 //         adi,output-range-microvolt = <0 10000000>;
                 // };
