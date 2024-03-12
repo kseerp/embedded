@@ -101,6 +101,7 @@ struct ltc2664_state {
 	int vref;
 	u32 toggle_sel;
 	u32 global_toggle;
+	u32 rfsadj;
 };
 
 static const int ltc2664_span_helper[][2] = {
@@ -130,7 +131,7 @@ static int ltc2664_scale_get(const struct ltc2664_state *st, int c, int *val)
 			*val = fs;
 		break;
 	case LTC2672:
-		*val = ltc2672_span_helper[span - 1] / 1000;
+		*val = ltc2672_span_helper[span - 1];
 		break;
 	default:
 		return -EINVAL;
@@ -439,7 +440,6 @@ static const struct iio_chan_spec_ext_info ltc2664_ext_info[] = {
 };
 
 #define LTC2664_CHANNEL(_chan) {					\
-	.type = IIO_VOLTAGE,						\
 	.indexed = 1,							\
 	.output = 1,							\
 	.channel = (_chan),						\
@@ -511,7 +511,8 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 	u32 reg, tmp[2], mspan;
 	int ret, span;
 
-	if (st->id == LTC2664) {
+	switch(st->id) {
+	case LTC2664:
 		ret = device_property_read_u32(dev, "adi,manual-span-operation-config", &mspan);
 		if (ret)
 			return dev_err_probe(dev, ret,
@@ -521,6 +522,16 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 			return dev_err_probe(dev, -EINVAL,
 				"adi,manual-span-operation-config exceeds: %u\n",
 				(u32)ARRAY_SIZE(ltc2664_mspan_lut));
+		break;
+	case LTC2672:
+		st->rfsadj = 20000;
+		ret = device_property_read_u32(dev, "adi,rfsadj-ohms", &st->rfsadj);
+		if (ret)
+			return dev_err_probe(dev, ret,
+					     "adi,rfsadj property not found\n");
+		break;
+	default:
+		return -EINVAL;
 	}
 
 	device_for_each_child_node(dev, child) {
@@ -556,7 +567,7 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 
 		switch(st->id) {
 		case LTC2664:
-			/* make voltage type measurement */
+			/* voltage type measurement */
 			chip_info->iio_chan[reg].type = IIO_VOLTAGE;
 
 			chan->raw[0] = ltc2664_mspan_lut[mspan][1];
@@ -586,7 +597,7 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 			}
 			break;
 		case LTC2672:
-			/* make current type measurement */
+			/* current type measurement */
 			chip_info->iio_chan[reg].type = IIO_CURRENT;
 
 			ret = fwnode_property_read_u32(child, "adi,output-range-microamp", &tmp[0]);
@@ -731,8 +742,11 @@ static int ltc2664_probe(struct spi_device *spi)
 			return dev_err_probe(dev, PTR_ERR(vref_reg),
 					     "Failed to get vref regulator");
 
-		vref_reg = NULL;
 		/* internal reference */
+		if (st->id == LTC2672)
+			st->vref = 1250;
+		else
+			vref_reg = NULL;
 	} else {
 		ret = regulator_enable(vref_reg);
 		if (ret)
