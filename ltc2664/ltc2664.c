@@ -528,7 +528,7 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 		st->rfsadj = 20000;
 		ret = device_property_read_u32(dev, "adi,rfsadj-ohms", &st->rfsadj);
 		if (!ret) {
-			if (st->rfadj < 19000 || st->rfadj > 41000) {
+			if (st->rfsadj < 19000 || st->rfsadj > 41000) {
 				fwnode_handle_put(child);
 				return dev_err_probe(dev, -EINVAL,
 					      "adi,rfsadj-ohms not in range\n");
