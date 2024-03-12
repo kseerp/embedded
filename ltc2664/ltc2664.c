@@ -5,6 +5,7 @@
  *
  * Copyright 2024 Analog Devices Inc.
  */
+
 #include <linux/bitfield.h>
 #include <linux/bits.h>
 #include <linux/clk.h>
