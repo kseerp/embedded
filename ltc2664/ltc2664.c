@@ -120,12 +120,21 @@ static int ltc2664_scale_get(const struct ltc2664_state *st, int c, int *val)
 	if (span < 0)
 		return span;
 
-	fs = ltc2664_span_helper[span][1] - ltc2664_span_helper[span][0];
+	switch (st->id) {
+	case LTC2664:
+		fs = ltc2664_span_helper[span][1] - ltc2664_span_helper[span][0];
 
-	if (st->vref)
-		*val = (fs / 2500) * st->vref;
-	else
-		*val = fs;
+		if (st->vref)
+			*val = (fs / 2500) * st->vref;
+		else
+			*val = fs;
+		break;
+	case LTC2672:
+		*val = ltc2672_span_helper[span - 1] / 1000;
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	return 0;
 }
