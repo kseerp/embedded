@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * LTC2664 4 channel, 16 bit Voltage Output SoftSpan DAC driver
+ * LTC2672 5 channel, 16 bit Current Output Softspan DAC driver
  *
  * Copyright 2024 Analog Devices Inc.
  */
@@ -52,7 +53,6 @@ enum {
 	LTC2664_SPAN_RANGE_M5V_5V,
 	LTC2664_SPAN_RANGE_M10V_10V,
 	LTC2664_SPAN_RANGE_M2V5_2V5,
-	LTC2664_SPAN_RANGE_MAX
 };
 
 enum {
@@ -96,13 +96,18 @@ struct ltc2664_state {
 	/* lock to protect against multiple access to the device and shared data */
 	struct mutex lock;
 	struct ltc2664_chip_info *chip_info;
+	enum ltc2664_ids id;
 	int vref;
 	u32 toggle_sel;
 	u32 global_toggle;
 };
 
-static const int ltc2664_span_helper[LTC2664_SPAN_RANGE_MAX][2] = {
+static const int ltc2664_span_helper[][2] = {
 	{0, 5000}, {0, 10000}, {-5000, 5000}, {-10000, 10000}, {-2500, 2500},
+};
+
+static const int ltc2672_span_helper[] = {
+	3125, 6250, 12500, 25000, 50000, 100000, 200000, 300000,
 };
 
 static int ltc2664_scale_get(const struct ltc2664_state *st, int c, int *val)
@@ -466,13 +471,26 @@ static int ltc2664_span_lookup(const struct ltc2664_state *st, int min, int max)
 {
 	u32 span;
 
-	for (span = 0; span < ARRAY_SIZE(ltc2664_span_helper); span++) {
-		if (min == ltc2664_span_helper[span][0] &&
-		    max == ltc2664_span_helper[span][1])
-			return span;
+	switch (st->id) {
+	case LTC2664:
+		for (span = 0; span < ARRAY_SIZE(ltc2664_span_helper); span++) {
+			if (min == ltc2664_span_helper[span][0] &&
+			    max == ltc2664_span_helper[span][1]) {
+				return span;
+			}
+		}
+		break;
+	case LTC2672:
+		for (span = 0; span < ARRAY_SIZE(ltc2672_span_helper); span++) {
+			if (max == ltc2672_span_helper[span])
+				return span;
+		}
+		break;
+	default:
+		return -EINVAL;
 	}
 
-	return -EINVAL;
+	return 0;
 }
 
 static int ltc2664_channel_config(struct ltc2664_state *st)
@@ -483,15 +501,17 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 	u32 reg, tmp[2], mspan;
 	int ret, span;
 
-	ret = device_property_read_u32(dev, "adi,manual-span-operation-config", &mspan);
-	if (ret)
-		return dev_err_probe(dev, ret,
-			"Failed to get adi,manual-span-operation-config property\n");
+	if (st->id == LTC2664) {
+		ret = device_property_read_u32(dev, "adi,manual-span-operation-config", &mspan);
+		if (ret)
+			return dev_err_probe(dev, ret,
+				"Failed to get adi,manual-span-operation-config property\n");
 
-	if (mspan > ARRAY_SIZE(ltc2664_mspan_lut))
-		return dev_err_probe(dev, -EINVAL,
-			"adi,manual-span-operation-config exceeds: %u\n",
-			(u32)ARRAY_SIZE(ltc2664_mspan_lut));
+		if (mspan > ARRAY_SIZE(ltc2664_mspan_lut))
+			return dev_err_probe(dev, -EINVAL,
+				"adi,manual-span-operation-config exceeds: %u\n",
+				(u32)ARRAY_SIZE(ltc2664_mspan_lut));
+	}
 
 	device_for_each_child_node(dev, child) {
 		struct ltc2664_chan *chan;
@@ -512,9 +532,6 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 
 		chan = &st->channels[reg];
 
-		chan->raw[0] = ltc2664_mspan_lut[mspan][1];
-		chan->raw[1] = ltc2664_mspan_lut[mspan][1];
-
 		if (fwnode_property_read_bool(child, "adi,toggle-mode")) {
 			chan->toggle_chan = true;
 			/* assume sw toggle ABI */
@@ -527,29 +544,58 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 				    &chip_info->iio_chan[reg].info_mask_separate);
 		}
 
-		ret = fwnode_property_read_u32_array(child, "adi,output-range-microvolt",
-						     tmp, ARRAY_SIZE(tmp));
-		if (!ret && mspan == 7) {
-			span = ltc2664_span_lookup(st, (int)tmp[0] / 1000,
-						   tmp[1] / 1000);
-			if (span < 0) {
-				fwnode_handle_put(child);
-				return dev_err_probe(dev, -EINVAL,
-						     "output range not valid:[%d %d]\n",
-						     tmp[0], tmp[1]);
+		switch(st->id) {
+		case LTC2664:
+			ret = fwnode_property_read_u32_array(child, "adi,output-range-microvolt",
+							     tmp, ARRAY_SIZE(tmp));
+			if (!ret && mspan == 7) {
+				span = ltc2664_span_lookup(st, (int)tmp[0] / 1000,
+							   tmp[1] / 1000);
+				if (span < 0) {
+					fwnode_handle_put(child);
+					return dev_err_probe(dev, -EINVAL,
+							     "output range not valid");
+				}
+
+				ret = regmap_write(st->regmap, LTC2664_CMD_SPAN_N(reg), span);
+				if (ret) {
+					fwnode_handle_put(child);
+					return dev_err_probe(dev, -EINVAL,
+							"failed to set chan settings\n");
+				}	
+
+				chan->span = span;
+			} else {
+				chan->span = ltc2664_mspan_lut[mspan][0];
 			}
 
-			ret = regmap_write(st->regmap, LTC2664_CMD_SPAN_N(reg), span);
-			if (ret) {
-				fwnode_handle_put(child);
-				return dev_err_probe(dev, -EINVAL,
-						"failed to set chan settings\n");
-			}
+			chan->raw[0] = ltc2664_mspan_lut[mspan][1];
+			chan->raw[1] = ltc2664_mspan_lut[mspan][1];
+			break;
+		case LTC2672:
+			ret = fwnode_property_read_u32(child, "adi,output-range-microamp", &tmp[0]);
+			if (!ret) {
+				span = ltc2664_span_lookup(st, 0, (int)tmp[0] / 1000) + 1;
+				if (span < 0) {
+					fwnode_handle_put(child);
+					return dev_err_probe(dev, -EINVAL,
+							"output range not valid");
+				}
 
-			chan->span = span;
-		} else {
-			chan->span = ltc2664_mspan_lut[mspan][0];
+				ret = regmap_write(st->regmap, LTC2664_CMD_SPAN_N(reg), span);
+				if (ret) {
+					fwnode_handle_put(child);
+					return dev_err_probe(dev, -EINVAL,
+							"failed to set chan settings\n");
+				}	
+
+				chan->span = span;
+			}
+			break;
+		default:
+			return -EINVAL;
 		}
+
 	}
 
 	return 0;
@@ -578,8 +624,10 @@ static int ltc2664_setup(struct ltc2664_state *st, struct regulator *vref)
 	 * Duplicate the default channel configuration as it can change during
 	 * @ltc2664_channel_config()
 	 */
-	chip_info->iio_chan = devm_kmemdup(&st->spi->dev, ltc2664_channels,
-					   sizeof(ltc2664_channels), GFP_KERNEL);
+	chip_info->iio_chan = devm_kmemdup(&st->spi->dev, chip_info->iio_chan,
+					   chip_info->num_channels *
+					   sizeof(*chip_info->iio_chan),
+					   GFP_KERNEL);
 	if (!chip_info->iio_chan)
 		return -ENOMEM;
 
@@ -637,6 +685,7 @@ static int ltc2664_probe(struct spi_device *spi)
 	chip_info = &ltc2664_chip_info_tbl[spi_get_device_id(spi)->driver_data];
 
 	st->chip_info = chip_info;
+	st->id = spi_get_device_id(spi)->driver_data;
 
 	mutex_init(&st->lock);
 
@@ -724,5 +773,5 @@ static struct spi_driver ltc2664_driver = {
 module_spi_driver(ltc2664_driver);
 
 MODULE_AUTHOR("Kim Seer Paller <kimseer.paller@analog.com>");
-MODULE_DESCRIPTION("Analog Devices LTC2664 DAC");
+MODULE_DESCRIPTION("Analog Devices LTC2664 and LTC2672 DAC");
 MODULE_LICENSE("GPL");
