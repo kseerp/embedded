@@ -25,8 +25,6 @@
 #include <linux/regulator/consumer.h>
 #include <linux/spi/spi.h>
 
-#define LTC2664_MAX_CHANNEL		5
-
 #define LTC2664_CMD_WRITE_N(n)		(0x00 + (n))  /* Write to input register n */
 #define LTC2664_CMD_UPDATE_N(n)		(0x10 + (n))  /* Update (power up) DAC register n */
 #define LTC2664_CMD_WRITE_N_UPDATE_ALL	0x20  /* Write to input register n, update (power-up) all */
@@ -42,6 +40,9 @@
 #define LTC2664_CMD_NO_OPERATION	0xF0  /* No operation */
 
 #define  LTC2664_REF_DISABLE		0x0001  /* Disable internal reference to save power when using an ext. ref. */
+
+#define LTC2664_MAX_CHANNEL		5
+#define LTC2664_MSPAN_SOFTSPAN		7
 
 enum ltc2664_ids {
 	LTC2664,
@@ -513,6 +514,7 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 
 	switch(st->id) {
 	case LTC2664:
+		mspan = ;
 		ret = device_property_read_u32(dev, "adi,manual-span-operation-config", &mspan);
 		if (ret)
 			return dev_err_probe(dev, ret,
