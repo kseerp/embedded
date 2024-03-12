@@ -514,23 +514,26 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 
 	switch(st->id) {
 	case LTC2664:
-		mspan = ;
+		mspan = LTC2664_MSPAN_SOFTSPAN;
 		ret = device_property_read_u32(dev, "adi,manual-span-operation-config", &mspan);
-		if (ret)
-			return dev_err_probe(dev, ret,
-				"Failed to get adi,manual-span-operation-config property\n");
-
-		if (mspan > ARRAY_SIZE(ltc2664_mspan_lut))
-			return dev_err_probe(dev, -EINVAL,
-				"adi,manual-span-operation-config exceeds: %u\n",
-				(u32)ARRAY_SIZE(ltc2664_mspan_lut));
+		if (!ret) {
+			if (mspan > ARRAY_SIZE(ltc2664_mspan_lut)) {
+				fwnode_handle_put(child);
+				return dev_err_probe(dev, -EINVAL,
+					"adi,manual-span-operation-config exceeds max\n");
+			}
+		}
 		break;
 	case LTC2672:
 		st->rfsadj = 20000;
 		ret = device_property_read_u32(dev, "adi,rfsadj-ohms", &st->rfsadj);
-		if (ret)
-			return dev_err_probe(dev, ret,
-					     "adi,rfsadj property not found\n");
+		if (!ret) {
+			if (st->rfadj < 19000 || st->rfadj > 41000) {
+				fwnode_handle_put(child);
+				return dev_err_probe(dev, -EINVAL,
+					      "adi,rfsadj-ohms not in range\n");
+			}
+		}
 		break;
 	default:
 		return -EINVAL;
@@ -577,7 +580,7 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 
 			ret = fwnode_property_read_u32_array(child, "adi,output-range-microvolt",
 							     tmp, ARRAY_SIZE(tmp));
-			if (!ret && mspan == 7) {
+			if (!ret && mspan == LTC2664_MSPAN_SOFTSPAN) {
 				span = ltc2664_span_lookup(st, (int)tmp[0] / 1000,
 							   tmp[1] / 1000);
 				if (span < 0) {
