@@ -547,6 +547,12 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 
 		switch(st->id) {
 		case LTC2664:
+			/* make voltage type measurement */
+			chip_info->iio_chan[reg].type = IIO_VOLTAGE;
+
+			chan->raw[0] = ltc2664_mspan_lut[mspan][1];
+			chan->raw[1] = ltc2664_mspan_lut[mspan][1];
+
 			ret = fwnode_property_read_u32_array(child, "adi,output-range-microvolt",
 							     tmp, ARRAY_SIZE(tmp));
 			if (!ret && mspan == 7) {
@@ -569,11 +575,11 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 			} else {
 				chan->span = ltc2664_mspan_lut[mspan][0];
 			}
-
-			chan->raw[0] = ltc2664_mspan_lut[mspan][1];
-			chan->raw[1] = ltc2664_mspan_lut[mspan][1];
 			break;
 		case LTC2672:
+			/* make current type measurement */
+			chip_info->iio_chan[reg].type = IIO_CURRENT;
+
 			ret = fwnode_property_read_u32(child, "adi,output-range-microamp", &tmp[0]);
 			if (!ret) {
 				span = ltc2664_span_lookup(st, 0, (int)tmp[0] / 1000) + 1;
