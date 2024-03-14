@@ -25,21 +25,21 @@
 #include <linux/regulator/consumer.h>
 #include <linux/spi/spi.h>
 
-#define LTC2664_CMD_WRITE_N(n)		(0x00 + (n))  /* Write to input register n */
-#define LTC2664_CMD_UPDATE_N(n)		(0x10 + (n))  /* Update (power up) DAC register n */
-#define LTC2664_CMD_WRITE_N_UPDATE_ALL	0x20  /* Write to input register n, update (power-up) all */
-#define LTC2664_CMD_WRITE_N_UPDATE_N(n)	(0x30 + (n))  /* Write to input register n, update (power-up)  */
-#define LTC2664_CMD_POWER_DOWN_N(n)	(0x40 + (n))  /* Power down n */
-#define LTC2664_CMD_POWER_DOWN_ALL	0x50  /* Power down chip (all DAC's, MUX and reference) */
+#define LTC2664_CMD_WRITE_N(n)		(0x00 + (n))
+#define LTC2664_CMD_UPDATE_N(n)		(0x10 + (n))
+#define LTC2664_CMD_WRITE_N_UPDATE_ALL	0x20
+#define LTC2664_CMD_WRITE_N_UPDATE_N(n)	(0x30 + (n))
+#define LTC2664_CMD_POWER_DOWN_N(n)	(0x40 + (n))
+#define LTC2664_CMD_POWER_DOWN_ALL	0x50
 
-#define LTC2664_CMD_SPAN_N(n)		(0x60 + (n)) /* Write span to dac n */
-#define LTC2664_CMD_CONFIG		0x70  /* Configure reference / toggle */
-#define LTC2664_CMD_MUX			0xB0  /* Select MUX channel (controlled by 5 LSbs in data word) */
-#define LTC2664_CMD_TOGGLE_SEL		0xC0  /* Select which DACs can be toggled (via toggle pin or global toggle bit) */
-#define LTC2664_CMD_GLOBAL_TOGGLE	0xD0  /* Software toggle control via global toggle bit */
-#define LTC2664_CMD_NO_OPERATION	0xF0  /* No operation */
+#define LTC2664_CMD_SPAN_N(n)		(0x60 + (n))
+#define LTC2664_CMD_CONFIG		0x70
+#define LTC2664_CMD_MUX			0xB0
+#define LTC2664_CMD_TOGGLE_SEL		0xC0
+#define LTC2664_CMD_GLOBAL_TOGGLE	0xD0
+#define LTC2664_CMD_NO_OPERATION	0xF0
 
-#define  LTC2664_REF_DISABLE		0x0001  /* Disable internal reference to save power when using an ext. ref. */
+#define  LTC2664_REF_DISABLE		0x0001
 
 #define LTC2664_MAX_CHANNEL		5
 #define LTC2664_MSPAN_SOFTSPAN		7
@@ -132,7 +132,7 @@ static int ltc2664_scale_get(const struct ltc2664_state *st, int c, int *val)
 			*val = fs;
 		break;
 	case LTC2672:
-		*val = ltc2672_span_helper[span - 1];
+		*val = BIT(span - 1) * (50000 * st->vref / st->rfsadj);
 		break;
 	default:
 		return -EINVAL;
@@ -166,7 +166,8 @@ static int ltc2664_dac_code_write(struct ltc2664_state *st, u32 chan, u32 input,
 	mutex_lock(&st->lock);
 	/* select the correct input register to write to */
 	if (c->toggle_chan) {
-		ret = regmap_write(st->regmap, LTC2664_CMD_TOGGLE_SEL, input << chan);
+		ret = regmap_write(st->regmap, LTC2664_CMD_TOGGLE_SEL,
+				   input << chan);
 		if (ret)
 			goto out_unlock;
 	}
@@ -186,7 +187,8 @@ static int ltc2664_dac_code_write(struct ltc2664_state *st, u32 chan, u32 input,
 	c->raw[input] = code;
 
 	if (c->toggle_chan)
-		ret = regmap_write(st->regmap, LTC2664_CMD_TOGGLE_SEL, st->toggle_sel);
+		ret = regmap_write(st->regmap, LTC2664_CMD_TOGGLE_SEL,
+				   st->toggle_sel);
 out_unlock:
 	mutex_unlock(&st->lock);
 	return ret;
@@ -319,7 +321,7 @@ static ssize_t ltc2664_reg_bool_set(struct iio_dev *indio_dev,
 	case LTC2664_POWERDOWN:
 		ret = regmap_write(st->regmap,
 				   en ? LTC2664_CMD_POWER_DOWN_N(chan->channel) :
-				  LTC2664_CMD_UPDATE_N(chan->channel), en);
+				   LTC2664_CMD_UPDATE_N(chan->channel), en);
 		if (ret)
 			break;
 
@@ -331,7 +333,8 @@ static ssize_t ltc2664_reg_bool_set(struct iio_dev *indio_dev,
 		else
 			st->toggle_sel &= ~BIT(chan->channel);
 
-		ret = regmap_write(st->regmap, LTC2664_CMD_TOGGLE_SEL, st->toggle_sel);
+		ret = regmap_write(st->regmap, LTC2664_CMD_TOGGLE_SEL,
+				   st->toggle_sel);
 		break;
 	case LTC2664_GLOBAL_TOGGLE:
 		ret = regmap_write(st->regmap, LTC2664_CMD_GLOBAL_TOGGLE, en);
@@ -512,7 +515,7 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 	u32 reg, tmp[2], mspan;
 	int ret, span;
 
-	switch(st->id) {
+	switch (st->id) {
 	case LTC2664:
 		mspan = LTC2664_MSPAN_SOFTSPAN;
 		ret = device_property_read_u32(dev, "adi,manual-span-operation-config", &mspan);
@@ -570,7 +573,7 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 				    &chip_info->iio_chan[reg].info_mask_separate);
 		}
 
-		switch(st->id) {
+		switch (st->id) {
 		case LTC2664:
 			/* voltage type measurement */
 			chip_info->iio_chan[reg].type = IIO_VOLTAGE;
@@ -594,7 +597,7 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 					fwnode_handle_put(child);
 					return dev_err_probe(dev, -EINVAL,
 							"failed to set chan settings\n");
-				}	
+				}
 
 				chan->span = span;
 			} else {
@@ -605,21 +608,23 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 			/* current type measurement */
 			chip_info->iio_chan[reg].type = IIO_CURRENT;
 
-			ret = fwnode_property_read_u32(child, "adi,output-range-microamp", &tmp[0]);
+			ret = fwnode_property_read_u32(child,
+						       "adi,output-range-microamp",
+						       &tmp[0]);
 			if (!ret) {
 				span = ltc2664_span_lookup(st, 0, (int)tmp[0] / 1000) + 1;
 				if (span < 0) {
 					fwnode_handle_put(child);
 					return dev_err_probe(dev, -EINVAL,
-							"output range not valid");
+							     "output range not valid");
 				}
 
 				ret = regmap_write(st->regmap, LTC2664_CMD_SPAN_N(reg), span);
 				if (ret) {
 					fwnode_handle_put(child);
 					return dev_err_probe(dev, -EINVAL,
-							"failed to set chan settings\n");
-				}	
+							     "failed to set chan settings\n");
+				}
 
 				chan->span = span;
 			}
