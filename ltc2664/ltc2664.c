@@ -39,10 +39,11 @@
 #define LTC2664_CMD_GLOBAL_TOGGLE	0xD0
 #define LTC2664_CMD_NO_OPERATION	0xF0
 
-#define  LTC2664_REF_DISABLE		0x0001
-
-#define LTC2664_MAX_CHANNEL		5
+#define LTC2664_REF_DISABLE		0x0001
 #define LTC2664_MSPAN_SOFTSPAN		7
+
+#define LTC2672_MAX_CHANNEL		5
+#define LTC2672_MAX_SPAN		7
 
 enum ltc2664_ids {
 	LTC2664,
@@ -94,7 +95,7 @@ struct ltc2664_state {
 	struct spi_device *spi;
 	struct regmap *regmap;
 	struct regulator_bulk_data regulators[2];
-	struct ltc2664_chan channels[LTC2664_MAX_CHANNEL];
+	struct ltc2664_chan channels[LTC2672_MAX_CHANNEL];
 	/* lock to protect against multiple access to the device and shared data */
 	struct mutex lock;
 	struct ltc2664_chip_info *chip_info;
@@ -132,7 +133,10 @@ static int ltc2664_scale_get(const struct ltc2664_state *st, int c, int *val)
 			*val = fs;
 		break;
 	case LTC2672:
-		*val = BIT(span - 1) * (50000 * st->vref / st->rfsadj);
+		if (span == LTC2672_MAX_SPAN)
+			*val = 4800 * (1000 * st->vref / st->rfsadj);
+		else
+			*val = 50 * BIT(span) * (1000 * st->vref / st->rfsadj);
 		break;
 	default:
 		return -EINVAL;
@@ -143,16 +147,26 @@ static int ltc2664_scale_get(const struct ltc2664_state *st, int c, int *val)
 
 static int ltc2664_offset_get(const struct ltc2664_state *st, int c, int *val)
 {
+	const struct ltc2664_chan *chan = &st->channels[c];
 	int span;
 
-	span = st->channels[c].span;
+	span = chan->span;
 	if (span < 0)
 		return span;
 
-	if (ltc2664_span_helper[span][0] < 0)
-		*val = -32768;
-	else
+	switch (st->id)
+	case LTC2664:
+		if (ltc2664_span_helper[span][0] < 0)
+			*val = -32768;
+		else
+			*val = 0;
+		break;
+	case LTC2672:
 		*val = 0;
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	return 0;
 }
@@ -612,14 +626,14 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 						       "adi,output-range-microamp",
 						       &tmp[0]);
 			if (!ret) {
-				span = ltc2664_span_lookup(st, 0, (int)tmp[0] / 1000) + 1;
+				span = ltc2664_span_lookup(st, 0, (int)tmp[0] / 1000);
 				if (span < 0) {
 					fwnode_handle_put(child);
 					return dev_err_probe(dev, -EINVAL,
 							     "output range not valid");
 				}
 
-				ret = regmap_write(st->regmap, LTC2664_CMD_SPAN_N(reg), span);
+				ret = regmap_write(st->regmap, LTC2664_CMD_SPAN_N(reg), span + 1);
 				if (ret) {
 					fwnode_handle_put(child);
 					return dev_err_probe(dev, -EINVAL,
