@@ -7,19 +7,13 @@
  */
 
 #include <linux/bitfield.h>
-#include <linux/bits.h>
-#include <linux/clk.h>
 #include <linux/device.h>
 #include <linux/gpio/consumer.h>
 #include <linux/iio/iio.h>
-#include <linux/sysfs.h>
-#include <linux/iio/sysfs.h>
-#include <linux/limits.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/mod_devicetable.h>
 #include <linux/mutex.h>
-#include <linux/of.h>
 #include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
@@ -44,6 +38,8 @@
 
 #define LTC2672_MAX_CHANNEL		5
 #define LTC2672_MAX_SPAN		7
+#define LTC2672_OFFSET_CODE		384
+#define LTC2672_SCALE_MULTIPLIER(n)	(50 * BIT(n))
 
 enum ltc2664_ids {
 	LTC2664,
@@ -136,7 +132,8 @@ static int ltc2664_scale_get(const struct ltc2664_state *st, int c, int *val)
 		if (span == LTC2672_MAX_SPAN)
 			*val = 4800 * (1000 * st->vref / st->rfsadj);
 		else
-			*val = 50 * BIT(span) * (1000 * st->vref / st->rfsadj);
+			*val = LTC2672_SCALE_MULTIPLIER(span) *
+			       (1000 * st->vref / st->rfsadj);
 		break;
 	default:
 		return -EINVAL;
@@ -154,7 +151,7 @@ static int ltc2664_offset_get(const struct ltc2664_state *st, int c, int *val)
 	if (span < 0)
 		return span;
 
-	switch (st->id)
+	switch (st->id) {
 	case LTC2664:
 		if (ltc2664_span_helper[span][0] < 0)
 			*val = -32768;
@@ -162,7 +159,11 @@ static int ltc2664_offset_get(const struct ltc2664_state *st, int c, int *val)
 			*val = 0;
 		break;
 	case LTC2672:
-		*val = 0;
+		if (chan->raw[0] >= LTC2672_OFFSET_CODE ||
+		    chan->raw[1] >= LTC2672_OFFSET_CODE)
+			*val = ltc2672_span_helper[span] / 250;
+		else
+			*val = 0;
 		break;
 	default:
 		return -EINVAL;
