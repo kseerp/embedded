@@ -25,7 +25,6 @@
 #define LTC2664_CMD_WRITE_N_UPDATE_N(n)	(0x30 + (n))
 #define LTC2664_CMD_POWER_DOWN_N(n)	(0x40 + (n))
 #define LTC2664_CMD_POWER_DOWN_ALL	0x50
-
 #define LTC2664_CMD_SPAN_N(n)		(0x60 + (n))
 #define LTC2664_CMD_CONFIG		0x70
 #define LTC2664_CMD_MUX			0xB0
@@ -647,7 +646,6 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 		default:
 			return -EINVAL;
 		}
-
 	}
 
 	return 0;
@@ -655,8 +653,8 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 
 static int ltc2664_setup(struct ltc2664_state *st, struct regulator *vref)
 {
-	struct gpio_desc *gpio;
 	struct ltc2664_chip_info *chip_info = st->chip_info;
+	struct gpio_desc *gpio;
 	int ret;
 
 	/*
