@@ -37,7 +37,6 @@
 
 #define LTC2672_MAX_CHANNEL		5
 #define LTC2672_MAX_SPAN		7
-#define LTC2672_OFFSET_CODE		384
 #define LTC2672_SCALE_MULTIPLIER(n)	(50 * BIT(n))
 
 enum ltc2664_ids {
@@ -58,31 +57,41 @@ enum {
 	LTC2664_INPUT_B,
 	LTC2664_INPUT_B_AVAIL,
 	LTC2664_POWERDOWN,
+	LTC2664_POWERDOWN_MODE,
 	LTC2664_TOGGLE_EN,
 	LTC2664_GLOBAL_TOGGLE,
 };
 
 static const u16 ltc2664_mspan_lut[8][2] = {
-	{LTC2664_SPAN_RANGE_M10V_10V, 32768}, /* MPS2=0, MPS1=0, MSP0=0 (0)*/
-	{LTC2664_SPAN_RANGE_M5V_5V, 32768}, /* MPS2=0, MPS1=0, MSP0=1 (1)*/
-	{LTC2664_SPAN_RANGE_M2V5_2V5, 32768}, /* MPS2=0, MPS1=1, MSP0=0 (2)*/
-	{LTC2664_SPAN_RANGE_0V_10V, 0}, /* MPS2=0, MPS1=1, MSP0=1 (3)*/
-	{LTC2664_SPAN_RANGE_0V_10V, 32768}, /* MPS2=1, MPS1=0, MSP0=0 (4)*/
-	{LTC2664_SPAN_RANGE_0V_5V, 0}, /* MPS2=1, MPS1=0, MSP0=1 (5)*/
-	{LTC2664_SPAN_RANGE_0V_5V, 32768}, /* MPS2=1, MPS1=1, MSP0=0 (6)*/
-	{LTC2664_SPAN_RANGE_0V_5V, 0} /* MPS2=1, MPS1=1, MSP0=1 (7)*/
+	{ LTC2664_SPAN_RANGE_M10V_10V, 32768 }, /* MPS2=0, MPS1=0, MSP0=0 (0)*/
+	{ LTC2664_SPAN_RANGE_M5V_5V, 32768 }, /* MPS2=0, MPS1=0, MSP0=1 (1)*/
+	{ LTC2664_SPAN_RANGE_M2V5_2V5, 32768 }, /* MPS2=0, MPS1=1, MSP0=0 (2)*/
+	{ LTC2664_SPAN_RANGE_0V_10V, 0 }, /* MPS2=0, MPS1=1, MSP0=1 (3)*/
+	{ LTC2664_SPAN_RANGE_0V_10V, 32768 }, /* MPS2=1, MPS1=0, MSP0=0 (4)*/
+	{ LTC2664_SPAN_RANGE_0V_5V, 0 }, /* MPS2=1, MPS1=0, MSP0=1 (5)*/
+	{ LTC2664_SPAN_RANGE_0V_5V, 32768 }, /* MPS2=1, MPS1=1, MSP0=0 (6)*/
+	{ LTC2664_SPAN_RANGE_0V_5V, 0 } /* MPS2=1, MPS1=1, MSP0=1 (7)*/
 };
+
+struct ltc2664_state;
 
 struct ltc2664_chip_info {
 	enum ltc2664_ids id;
 	const char *name;
+	int (*scale_get)(const struct ltc2664_state *st, int c);
+	int (*offset_get)(const struct ltc2664_state *st, int c);
+	int measurement_type;
 	unsigned int num_channels;
 	const struct iio_chan_spec *iio_chan;
 	const int (*span_helper)[2];
 	unsigned int num_span;
+	unsigned int internal_vref;
+	bool manual_span_support;
+	bool rfsadj_support;
 };
 
 struct ltc2664_chan {
+	const struct iio_chan_spec_ext_info *ext_info;
 	bool toggle_chan;
 	bool powerdown;
 	u8 span;
@@ -92,7 +101,6 @@ struct ltc2664_chan {
 struct ltc2664_state {
 	struct spi_device *spi;
 	struct regmap *regmap;
-	struct regulator_bulk_data regulators[2];
 	struct ltc2664_chan channels[LTC2672_MAX_CHANNEL];
 	/* lock to protect against multiple access to the device and shared data */
 	struct mutex lock;
@@ -105,15 +113,25 @@ struct ltc2664_state {
 };
 
 static const int ltc2664_span_helper[][2] = {
-	{0, 5000}, {0, 10000}, {-5000, 5000}, {-10000, 10000}, {-2500, 2500},
+	{ 0, 5000 },
+	{ 0, 10000 },
+	{ -5000, 5000 },
+	{ -10000, 10000 },
+	{ -2500, 2500 },
 };
 
 static const int ltc2672_span_helper[][2] = {
-	{0, 3125}, {0, 6250}, {0, 12500}, {0, 25000}, {0, 50000}, {0, 100000},
-	{0, 200000}, {0, 300000},
+	{ 0, 3125 },
+	{ 0, 6250 },
+	{ 0, 12500 },
+	{ 0, 25000 },
+	{ 0, 50000 },
+	{ 0, 100000 },
+	{ 0, 200000 },
+	{ 0, 300000 },
 };
 
-static int ltc2664_scale_get(const struct ltc2664_state *st, int c, int *val)
+static int ltc2664_scale_get(const struct ltc2664_state *st, int c)
 {
 	const struct ltc2664_chan *chan = &st->channels[c];
 	const int (*span_helper)[2] = st->chip_info->span_helper;
@@ -123,28 +141,29 @@ static int ltc2664_scale_get(const struct ltc2664_state *st, int c, int *val)
 	if (span < 0)
 		return span;
 
-	switch (st->chip_info->id) {
-	case LTC2664:
-		fs = span_helper[span][1] - span_helper[span][0];
+	fs = span_helper[span][1] - span_helper[span][0];
 
-		if (st->vref)
-			*val = (fs / 2500) * st->vref;
-		else
-			*val = fs;
-		return 0;
-	case LTC2672:
-		if (span == LTC2672_MAX_SPAN)
-			*val = 4800 * (1000 * st->vref / st->rfsadj);
-		else
-			*val = LTC2672_SCALE_MULTIPLIER(span) *
-			       (1000 * st->vref / st->rfsadj);
-		return 0;
-	default:
-		return -EINVAL;
-	}
+	return (fs / 2500) * st->vref;
 }
 
-static int ltc2664_offset_get(const struct ltc2664_state *st, int c, int *val)
+static int ltc2672_scale_get(const struct ltc2664_state *st, int c)
+{
+	const struct ltc2664_chan *chan = &st->channels[c];
+	int span, fs;
+
+	span = chan->span;
+	if (span < 0)
+		return span;
+
+	fs = 1000 * st->vref / st->rfsadj;
+
+	if (span == LTC2672_MAX_SPAN)
+		return 4800 * fs;
+
+	return LTC2672_SCALE_MULTIPLIER(span) * fs;
+}
+
+static int ltc2664_offset_get(const struct ltc2664_state *st, int c)
 {
 	const struct ltc2664_chan *chan = &st->channels[c];
 	int span;
@@ -154,14 +173,24 @@ static int ltc2664_offset_get(const struct ltc2664_state *st, int c, int *val)
 		return span;
 
 	if (st->chip_info->span_helper[span][0] < 0)
-		*val = -32768;
-	else if (chan->raw[0] >= LTC2672_OFFSET_CODE ||
-		 chan->raw[1] >= LTC2672_OFFSET_CODE)
-		*val = st->chip_info->span_helper[1][span] / 250;
-	else
-		*val = 0;
+		return -32768;
 
 	return 0;
+}
+
+static int ltc2672_offset_get(const struct ltc2664_state *st, int c)
+{
+	const struct ltc2664_chan *chan = &st->channels[c];
+	int span;
+
+	span = chan->span;
+	if (span < 0)
+		return span;
+
+	if (st->chip_info->span_helper[span][1] < 0)
+		return -32768;
+
+	return st->chip_info->span_helper[span][1] / 250;
 }
 
 static int ltc2664_dac_code_write(struct ltc2664_state *st, u32 chan, u32 input,
@@ -246,15 +275,11 @@ static int ltc2664_read_raw(struct iio_dev *indio_dev,
 
 		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_OFFSET:
-		ret = ltc2664_offset_get(st, chan->channel, val);
-		if (ret)
-			return ret;
+		*val = st->chip_info->offset_get(st, chan->channel);
 
 		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_SCALE:
-		ret = ltc2664_scale_get(st, chan->channel, val);
-		if (ret)
-			return ret;
+		*val = st->chip_info->scale_get(st, chan->channel);
 
 		*val2 = 16;
 		return IIO_VAL_FRACTIONAL_LOG2;
@@ -295,6 +320,8 @@ static ssize_t ltc2664_reg_bool_get(struct iio_dev *indio_dev,
 		val = st->channels[chan->channel].powerdown;
 
 		return sysfs_emit(buf, "%u\n", val);
+	case LTC2664_POWERDOWN_MODE:
+		return sysfs_emit(buf, "42kohm_to_gnd\n");
 	case LTC2664_TOGGLE_EN:
 		val = !!(st->toggle_sel & BIT(chan->channel));
 
@@ -434,18 +461,22 @@ static const struct iio_chan_spec_ext_info ltc2664_toggle_sym_ext_info[] = {
 			      ltc2664_dac_input_read, ltc2664_dac_input_write),
 	LTC2664_CHAN_EXT_INFO("powerdown", LTC2664_POWERDOWN, IIO_SEPARATE,
 			      ltc2664_reg_bool_get, ltc2664_reg_bool_set),
+	LTC2664_CHAN_EXT_INFO("powerdown_mode", LTC2664_POWERDOWN_MODE,
+			      IIO_SEPARATE, ltc2664_reg_bool_get, NULL),
 	LTC2664_CHAN_EXT_INFO("symbol", LTC2664_GLOBAL_TOGGLE, IIO_SEPARATE,
 			      ltc2664_reg_bool_get, ltc2664_reg_bool_set),
 	LTC2664_CHAN_EXT_INFO("toggle_en", LTC2664_TOGGLE_EN,
 			      IIO_SEPARATE, ltc2664_reg_bool_get,
 			      ltc2664_reg_bool_set),
-	{}
+	{ }
 };
 
 static const struct iio_chan_spec_ext_info ltc2664_ext_info[] = {
 	LTC2664_CHAN_EXT_INFO("powerdown", LTC2664_POWERDOWN, IIO_SEPARATE,
 			      ltc2664_reg_bool_get, ltc2664_reg_bool_set),
-	{}
+	LTC2664_CHAN_EXT_INFO("powerdown_mode", LTC2664_POWERDOWN_MODE,
+			      IIO_SEPARATE, ltc2664_reg_bool_get, NULL),
+	{ }
 };
 
 #define LTC2664_CHANNEL(_chan) {					\
@@ -476,32 +507,56 @@ static const struct iio_chan_spec ltc2672_channels[] = {
 static const struct ltc2664_chip_info ltc2664_chip = {
 	.id = LTC2664,
 	.name = "ltc2664",
+	.scale_get = ltc2664_scale_get,
+	.offset_get = ltc2664_offset_get,
+	.measurement_type = IIO_VOLTAGE,
 	.num_channels = ARRAY_SIZE(ltc2664_channels),
 	.iio_chan = ltc2664_channels,
 	.span_helper = ltc2664_span_helper,
 	.num_span = ARRAY_SIZE(ltc2664_span_helper),
+	.internal_vref = 2500,
+	.manual_span_support = true,
+	.rfsadj_support = false,
 };
 
 static const struct ltc2664_chip_info ltc2672_chip = {
 	.id = LTC2672,
 	.name = "ltc2672",
+	.scale_get = ltc2672_scale_get,
+	.offset_get = ltc2672_offset_get,
+	.measurement_type = IIO_CURRENT,
 	.num_channels = ARRAY_SIZE(ltc2672_channels),
 	.iio_chan = ltc2672_channels,
 	.span_helper = ltc2672_span_helper,
 	.num_span = ARRAY_SIZE(ltc2672_span_helper),
+	.internal_vref = 1250,
+	.manual_span_support = false,
+	.rfsadj_support = true,
 };
 
-static int ltc2664_span_lookup(const struct ltc2664_state *st, int min, int max)
+static int ltc2664_set_span(const struct ltc2664_state *st, int min, int max,
+			    int chan)
 {
-	const int (*span_helper)[2] = st->chip_info->span_helper;
-	int span;
+	const struct ltc2664_chip_info *chip_info = st->chip_info;
+	const int (*span_helper)[2] = chip_info->span_helper;
+	int span, ret;
 
-	for (span = 0; span < st->chip_info->num_span; span++) {
+	st->iio_channels[chan].type = chip_info->measurement_type;
+
+	for (span = 0; span < chip_info->num_span; span++) {
 		if (min == span_helper[span][0] && max == span_helper[span][1])
-			return span;
+			break;
 	}
 
-	return -EINVAL;
+	if (span == chip_info->num_span)
+		return -EINVAL;
+
+	ret = regmap_write(st->regmap, LTC2664_CMD_SPAN_N(chan),
+			   (chip_info->id == LTC2672) ? span + 1 : span);
+	if (ret)
+		return ret;
+
+	return span;
 }
 
 static int ltc2664_channel_config(struct ltc2664_state *st)
@@ -510,24 +565,25 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 	struct device *dev = &st->spi->dev;
 	struct fwnode_handle *child;
 	u32 reg, tmp[2], mspan;
-	int ret, span;
+	int ret, span = 0;
 
 	mspan = LTC2664_MSPAN_SOFTSPAN;
-	ret = device_property_read_u32(dev, "adi,manual-span-operation-config", &mspan);
+	ret = device_property_read_u32(dev, "adi,manual-span-operation-config",
+				       &mspan);
 	if (!ret) {
-		if (chip_info->id != LTC2664)
+		if (!chip_info->manual_span_support)
 			return dev_err_probe(dev, -EINVAL,
-				"adi,manual-span-operation-config not supported\n");
+			       "adi,manual-span-operation-config not supported\n");
 
 		if (mspan > ARRAY_SIZE(ltc2664_mspan_lut))
 			return dev_err_probe(dev, -EINVAL,
-				"adi,manual-span-operation-config not in range\n");
+			       "adi,manual-span-operation-config not in range\n");
 	}
 
 	st->rfsadj = 20000;
 	ret = device_property_read_u32(dev, "adi,rfsadj-ohms", &st->rfsadj);
 	if (!ret) {
-		if (chip_info->id != LTC2672)
+		if (!chip_info->rfsadj_support)
 			return dev_err_probe(dev, -EINVAL,
 					     "adi,rfsadj-ohms not supported\n");
 
@@ -540,25 +596,23 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 		struct ltc2664_chan *chan;
 
 		ret = fwnode_property_read_u32(child, "reg", &reg);
-		if (ret) {
-			fwnode_handle_put(child);
+		if (ret)
 			return dev_err_probe(dev, ret,
 					     "Failed to get reg property\n");
-		}
 
-		if (reg >= chip_info->num_channels) {
-			fwnode_handle_put(child);
+		if (reg >= chip_info->num_channels)
 			return dev_err_probe(dev, -EINVAL,
 					     "reg bigger than: %d\n",
 					     chip_info->num_channels);
-		}
 
 		chan = &st->channels[reg];
 
 		if (fwnode_property_read_bool(child, "adi,toggle-mode")) {
 			chan->toggle_chan = true;
 			/* assume sw toggle ABI */
-			st->iio_channels[reg].ext_info = ltc2664_toggle_sym_ext_info;
+			chan->ext_info = ltc2664_toggle_sym_ext_info;
+			st->iio_channels[reg].ext_info = chan->ext_info;
+
 			/*
 			 * Clear IIO_CHAN_INFO_RAW bit as toggle channels expose
 			 * out_voltage/current_raw{0|1} files.
@@ -575,54 +629,22 @@ static int ltc2664_channel_config(struct ltc2664_state *st)
 		ret = fwnode_property_read_u32_array(child, "adi,output-range-microvolt",
 						     tmp, ARRAY_SIZE(tmp));
 		if (!ret && mspan == LTC2664_MSPAN_SOFTSPAN) {
-			/* voltage type measurement */
-			st->iio_channels[reg].type = IIO_VOLTAGE;
+			chan->span = ltc2664_set_span(st, tmp[0] / 1000,
+						      tmp[1] / 1000, reg);
+			if (span < 0)
+				return dev_err_probe(dev, span,
+						     "Failed to set span\n");
 
-			span = ltc2664_span_lookup(st, (int)tmp[0] / 1000,
-						   tmp[1] / 1000);
-			if (span < 0) {
-				fwnode_handle_put(child);
-				return dev_err_probe(dev, -EINVAL,
-						     "output range not valid");
-			}
-
-			ret = regmap_write(st->regmap,
-					   LTC2664_CMD_SPAN_N(reg),
-					   span);
-			if (ret) {
-				fwnode_handle_put(child);
-				return dev_err_probe(dev, -EINVAL,
-						"failed to set chan settings\n");
-			}
-
-			chan->span = span;
 		}
 
 		ret = fwnode_property_read_u32(child,
 					       "adi,output-range-microamp",
 					       &tmp[0]);
 		if (!ret) {
-			/* current type measurement */
-			st->iio_channels[reg].type = IIO_CURRENT;
-
-			span = ltc2664_span_lookup(st, 0,
-						   (int)tmp[0] / 1000);
-			if (span < 0) {
-				fwnode_handle_put(child);
-				return dev_err_probe(dev, -EINVAL,
-						     "output range not valid");
-			}
-
-			ret = regmap_write(st->regmap,
-					   LTC2664_CMD_SPAN_N(reg),
-					   span + 1);
-			if (ret) {
-				fwnode_handle_put(child);
-				return dev_err_probe(dev, -EINVAL,
-						     "failed to set chan settings\n");
-			}
-
-			chan->span = span;
+			chan->span = ltc2664_set_span(st, 0, tmp[0] / 1000, reg);
+			if (span < 0)
+				return dev_err_probe(dev, span,
+						     "Failed to set span\n");
 		}
 	}
 
@@ -635,16 +657,13 @@ static int ltc2664_setup(struct ltc2664_state *st, struct regulator *vref)
 	struct gpio_desc *gpio;
 	int ret;
 
-	/*
-	 * If we have a clr/reset pin, use that to reset the chip.
-	 */
-	gpio = devm_gpiod_get_optional(&st->spi->dev, "clr", GPIOD_OUT_HIGH);
+	/* If we have a clr/reset pin, use that to reset the chip. */
+	gpio = devm_gpiod_get_optional(&st->spi->dev, "reset", GPIOD_OUT_HIGH);
 	if (IS_ERR(gpio))
 		return dev_err_probe(&st->spi->dev, PTR_ERR(gpio),
 				     "Failed to get reset gpio");
 	if (gpio) {
 		usleep_range(1000, 1200);
-		/* bring device out of reset */
 		gpiod_set_value_cansleep(gpio, 0);
 	}
 
@@ -653,7 +672,7 @@ static int ltc2664_setup(struct ltc2664_state *st, struct regulator *vref)
 	 * @ltc2664_channel_config()
 	 */
 	st->iio_channels = devm_kmemdup(&st->spi->dev, chip_info->iio_chan,
-					chip_info->num_channels *
+					(chip_info->num_channels + 1) *
 					sizeof(*chip_info->iio_chan),
 					GFP_KERNEL);
 
@@ -665,13 +684,6 @@ static int ltc2664_setup(struct ltc2664_state *st, struct regulator *vref)
 		return 0;
 
 	return regmap_set_bits(st->regmap, LTC2664_CMD_CONFIG, LTC2664_REF_DISABLE);
-}
-
-static void ltc2664_disable_regulators(void *data)
-{
-	struct ltc2664_state *st = data;
-
-	regulator_bulk_disable(ARRAY_SIZE(st->regulators), st->regulators);
 }
 
 static void ltc2664_disable_regulator(void *regulator)
@@ -694,6 +706,7 @@ static const struct iio_info ltc2664_info = {
 
 static int ltc2664_probe(struct spi_device *spi)
 {
+	static const char * const regulators[] = { "vcc", "iovcc", "v-neg" };
 	const struct ltc2664_chip_info *chip_info;
 	struct device *dev = &spi->dev;
 	struct regulator *vref_reg;
@@ -721,39 +734,25 @@ static int ltc2664_probe(struct spi_device *spi)
 		return dev_err_probe(dev, PTR_ERR(st->regmap),
 				     "Failed to init regmap");
 
-	st->regulators[0].supply = "vcc";
-	st->regulators[1].supply = "iovcc";
-	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(st->regulators),
-				      st->regulators);
-	if (ret)
-		return dev_err_probe(dev, ret, "Failed to get regulators\n");
-
-	ret = regulator_bulk_enable(ARRAY_SIZE(st->regulators), st->regulators);
+	ret = devm_regulator_bulk_get_enable(dev, ARRAY_SIZE(regulators),
+					     regulators);
 	if (ret)
 		return dev_err_probe(dev, ret, "Failed to enable regulators\n");
 
-	ret = devm_add_action_or_reset(dev, ltc2664_disable_regulators, st);
-	if (ret)
-		return ret;
-
-	vref_reg = devm_regulator_get_optional(dev, "vref");
+	vref_reg = devm_regulator_get_optional(dev, "ref");
 	if (IS_ERR(vref_reg)) {
 		if (PTR_ERR(vref_reg) != -ENODEV)
 			return dev_err_probe(dev, PTR_ERR(vref_reg),
-					     "Failed to get vref regulator");
+					     "Failed to get ref regulator");
 
 		vref_reg = NULL;
 
-		/* internal reference */
-		if (chip_info->id == LTC2664)
-			st->vref = 2500;
-		else
-			st->vref = 1250;
+		st->vref = chip_info->internal_vref;
 	} else {
 		ret = regulator_enable(vref_reg);
 		if (ret)
 			return dev_err_probe(dev, ret,
-					     "Failed to enable vref regulators\n");
+					     "Failed to enable ref regulators\n");
 
 		ret = devm_add_action_or_reset(dev, ltc2664_disable_regulator,
 					       vref_reg);
@@ -762,7 +761,7 @@ static int ltc2664_probe(struct spi_device *spi)
 
 		ret = regulator_get_voltage(vref_reg);
 		if (ret < 0)
-			return dev_err_probe(dev, ret, "Failed to get vref\n");
+			return dev_err_probe(dev, ret, "Failed to get ref\n");
 
 		st->vref = ret / 1000;
 	}
@@ -783,14 +782,14 @@ static int ltc2664_probe(struct spi_device *spi)
 static const struct spi_device_id ltc2664_id[] = {
 	{ "ltc2664", (kernel_ulong_t)&ltc2664_chip },
 	{ "ltc2672", (kernel_ulong_t)&ltc2672_chip },
-	{ },
+	{ }
 };
 MODULE_DEVICE_TABLE(spi, ltc2664_id);
 
 static const struct of_device_id ltc2664_of_id[] = {
 	{ .compatible = "adi,ltc2664", .data = &ltc2664_chip },
 	{ .compatible = "adi,ltc2672", .data = &ltc2672_chip },
-	{ },
+	{ }
 };
 MODULE_DEVICE_TABLE(of, ltc2664_of_id);
 
